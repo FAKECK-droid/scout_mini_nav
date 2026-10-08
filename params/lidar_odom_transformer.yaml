@@ -1,0 +1,18 @@
+# 输入 FAST-LIO IMU 位姿，经过 IMU—雷达—车体外参换算，输出 odom 中的车体位姿。
+# 固定外参由 bringup 从实际 FAST-LIO YAML 和 LIDAR_MOUNT 同时传入。
+lidar_odom_transformer:
+  ros__parameters:
+    input_topic: /Odometry
+    output_topic: /lio/odometry
+    world_frame: camera_init       # 输入 header.frame_id，保留 FAST-LIO 原始基准。
+    output_world_frame: odom       # 输出 header.frame_id，数值也会进行坐标变换。
+    imu_frame: body                # FAST-LIO body 表示 IMU，不是车体 base_link。
+    base_frame: base_link
+    # 首次有效车体位姿的位置和偏航确定 odom；参考变换随后保持固定。
+    # 动态 odom → base_link 由 EKF 发布，固定 odom → camera_init 由转换节点发布。
+    publish_tf: false
+    publish_world_tf: true
+    # 本机 FAST-LIO covariance 错将角度放在前 3 项，转换时恢复 ROS 顺序。
+    input_covariance_order: rotation_position
+    # 顺序 x,y,z,roll,pitch,yaw，单位 m²/rad²；初始噪声估计，实测后调整。
+    pose_covariance_floor: [0.0025, 0.0025, 0.01, 0.0004, 0.0004, 0.0009]

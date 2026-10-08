@@ -1,0 +1,15 @@
+# FAST-LIO 的 body 是 IMU 坐标系，本节点把其位姿换算为 base_link 位姿。
+# t_imu_lidar/R_imu_lidar 由启动文件读取 fast_lio_config 的 extrinsic_T/R，
+# t_base_lidar/rpy_base_lidar 与安装静态 TF 使用同一组启动文件参数。
+lidar_odom_transformer:
+  ros__parameters:
+    input_topic: /Odometry
+    output_topic: /lio/odometry
+    world_frame: camera_init       # 保留原世界坐标系，不直接改名成 odom。
+    imu_frame: body
+    base_frame: base_link
+    publish_tf: false              # 以后由 EKF 发布 odom → base_link。
+    # 本机版本 state 顺序为 pos,rot，但发布 covariance 时交换了两块。
+    input_covariance_order: rotation_position
+    # 顺序 x,y,z,roll,pitch,yaw，单位 m²/rad²；实车标定后按噪声调整。
+    pose_covariance_floor: [0.0025, 0.0025, 0.01, 0.0004, 0.0004, 0.0009]

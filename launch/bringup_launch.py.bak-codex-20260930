@@ -1,0 +1,143 @@
+# 版权所有 (c) 2018 英特尔公司
+#
+# 本文件根据 Apache License 2.0 版（以下简称“许可证”）授权；
+# 除非遵守许可证，否则不得使用本文件。
+# 可在以下地址获取许可证副本：
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# 除非适用法律另有要求或经书面同意，根据许可证分发的软件均按“原样”提供，
+#
+# 不附带任何明示或默示的保证或条件。
+# 有关许可证下权限和限制的具体语言，请参阅许可证。
+#
+
+import os
+
+from ament_index_python.packages import get_package_share_directory
+
+from launch import LaunchDescription
+from launch.actions import (DeclareLaunchArgument, GroupAction,
+                            IncludeLaunchDescription, SetEnvironmentVariable)
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
+from launch_ros.actions import PushRosNamespace
+from launch_ros.descriptions import ParameterFile
+from nav2_common.launch import ReplaceString, RewrittenYaml
+
+
+def generate_launch_description():
+    # 获取启动文件目录
+    bringup_dir = get_package_share_directory('scout_mini_nav')
+    launch_dir = os.path.join(bringup_dir, 'launch')
+
+    base_dir = get_package_share_directory('scout_base')
+    lidar_dir = get_package_share_directory('livox_ros_driver2')
+    camera_dir = get_package_share_directory('orbbec_camera')
+
+    # 创建启动配置变量
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    params_file = LaunchConfiguration('params_file')
+    autostart = LaunchConfiguration('autostart')
+    use_respawn = LaunchConfiguration('use_respawn')
+    log_level = LaunchConfiguration('log_level')
+
+    remappings = [('/tf', 'tf'),
+                  ('/tf_static', 'tf_static')]
+
+    # 创建包含替换项的临时 YAML 文件
+    param_substitutions = {
+        'use_sim_time': use_sim_time}
+
+
+    stdout_linebuf_envvar = SetEnvironmentVariable(
+        'RCUTILS_LOGGING_BUFFERED_STREAM', '1')
+
+    declare_use_sim_time_cmd = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='如果为 true，则使用仿真（Gazebo）时钟')
+
+    declare_params_file_cmd = DeclareLaunchArgument(
+        'params_file',
+        default_value=os.path.join(bringup_dir, 'params', 'nav2_params.yaml'),
+        description='所有启动节点使用的 ROS 2 参数文件的完整路径')
+
+    declare_autostart_cmd = DeclareLaunchArgument(
+        'autostart', default_value='true',
+        description='自动启动 Nav2 栈')
+
+    declare_use_respawn_cmd = DeclareLaunchArgument(
+        'use_respawn', default_value='False',
+        description='节点崩溃时是否重新启动。仅在禁用组合模式时生效。')
+
+    declare_log_level_cmd = DeclareLaunchArgument(
+        'log_level', default_value='info',
+        description='日志级别')
+
+    # 指定操作
+    bringup_cmd_group = GroupAction([
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(os.path.join(base_dir, 'launch', 'scout_mini_base.launch.py')),
+        #     launch_arguments={'use_sim_time': use_sim_time,
+        #                       'port_name': 'can0',
+        #                       'odom_frame': 'odom',
+        #                       'base_frame': 'base',
+        #                       'odom_topic_name': 'odom',
+        #                       'is_scout_mini': 'true',
+        #                       'is_omni_wheel': 'false',
+        #                       'simulated_robot': 'false',
+        #                       'control_rate': 50}.items()
+        # ),
+
+        # 启动激光雷达
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(lidar_dir, 'launch_ROS2', 'msg_MID360_launch.py')),
+        ),
+
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(os.path.join(camera_dir, 'launch', 'orbbec_camera.launch.py')),
+        #     launch_arguments={'depth_registration': 'true',
+        #                       'enable_colored_point_cloud': 'true',
+        #                       'cloud_frame_id': 'camera_link',
+        #                       'enable_publish_extrinsic': 'true',
+        #                       }.items()),
+
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'slam_launch.py')),
+            launch_arguments={'namespace': namespace,
+                              'use_sim_time': use_sim_time,
+                              'autostart': autostart,
+                              'use_respawn': use_respawn,
+                              'params_file': params_file}.items()),
+
+        # IncludeLaunchDescription(
+        #     PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.py')),
+        #     launch_arguments={'namespace': namespace,
+        #                       'use_sim_time': use_sim_time,
+        #                       'autostart': autostart,
+        #                       'params_file': params_file,
+        #                       'use_composition': use_composition,
+        #                       'use_respawn': use_respawn,
+        #                       'container_name': 'nav2_container'}.items()),
+    ])
+
+    # 创建启动描述并填充内容
+    ld = LaunchDescription()
+
+    # 设置环境变量
+    ld.add_action(stdout_linebuf_envvar)
+
+    # 声明启动选项
+    ld.add_action(declare_use_sim_time_cmd)
+    ld.add_action(declare_params_file_cmd)
+    ld.add_action(declare_autostart_cmd)
+    ld.add_action(declare_use_respawn_cmd)
+    ld.add_action(declare_log_level_cmd)
+
+    # 添加启动所有导航节点的操作
+    ld.add_action(bringup_cmd_group)
+
+    return ld
