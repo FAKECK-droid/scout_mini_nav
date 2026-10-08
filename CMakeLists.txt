@@ -41,6 +41,11 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/test/test_odometry_fusion.py
       --binary $<TARGET_FILE:lidar_odom_transformer>)
   set_tests_properties(wheel_lio_fusion PROPERTIES TIMEOUT 45)
+  # 只求值启动文件；验证开关、地图检查、外参共用及静态占位移除。
+  add_test(NAME relocalization_launch_contract
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/test_relocalization_launch.py)
+  set_tests_properties(relocalization_launch_contract PROPERTIES TIMEOUT 20)
 endif()
 
 ament_package()

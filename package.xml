@@ -24,6 +24,7 @@
   <depend>eigen</depend>
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>robot_localization</exec_depend>
+  <exec_depend>scout_mini_relocalization</exec_depend>
   <test_depend>tf2_msgs</test_depend>
   <test_depend>python3-numpy</test_depend>
 

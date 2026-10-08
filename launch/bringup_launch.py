@@ -8,6 +8,7 @@
 里程计。关闭建图模式时，FAST-LIO2 仍维护算法所需的内部局部地图。
 """
 
+import importlib.util
 import math
 import os
 from datetime import datetime
@@ -106,6 +107,26 @@ def _create_lidar_odom_transformer(context):
                 "rpy_base_lidar": LIDAR_MOUNT["rpy"],
             },
         ],
+    )]
+
+
+def _create_relocalizer(context):
+    """先检查重定位输入，再启动仅维护 map → odom 的独立节点."""
+    if LaunchConfiguration("use_relocalization").perform(context).lower() != "true":
+        return []
+    share = get_package_share_directory("scout_mini_relocalization")
+    config = LaunchConfiguration("relocalization_config").perform(context)
+    if not config:
+        config = os.path.join(share, "config", "relocalization.yaml")
+    spec = importlib.util.spec_from_file_location(
+        "relocalization_support", os.path.join(share, "launch", "relocalization_support.py"))
+    support = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(support)
+    return [support.create_relocalizer(
+        LaunchConfiguration("prior_pcd_file").perform(context),
+        config,
+        LaunchConfiguration("fast_lio_config").perform(context),
+        ParameterValue(LaunchConfiguration("use_sim_time"), value_type=bool),
     )]
 
 
@@ -231,7 +252,15 @@ def generate_launch_description():
         "use_relocalization",
         default_value="false",
         choices=["true", "false"],
-        description="true 发布重合的 map → odom 静态 TF；false 留给后续重定位维护动态 TF（尚未实现）",
+        description="true 启动 small_gicp 重定位，RViz 给初值后维护 map → odom；false 不发布该 TF",
+    )
+    declare_prior_pcd_file = DeclareLaunchArgument(
+        "prior_pcd_file", default_value="",
+        description="启用重定位时必填：先验 PCD 地图绝对路径，不自动选择地图",
+    )
+    declare_relocalization_config = DeclareLaunchArgument(
+        "relocalization_config", default_value="",
+        description="重定位参数 YAML；空值使用 scout_mini_relocalization 的默认配置",
     )
     declare_mapping_mode = DeclareLaunchArgument(
         "mapping_mode",
@@ -304,27 +333,6 @@ def generate_launch_description():
         ],
     )
 
-    # 重定位尚未实现；启用此选项时暂用重合的 map → odom 静态 TF。
-    # 关闭时不发布，留给后续重定位模块维护动态 TF。
-    map_odom_static_tf = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="map_odom_static_tf",
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("use_relocalization")),
-        parameters=[{"use_sim_time": use_sim_time}],
-        arguments=[
-            "--x", "0.0",
-            "--y", "0.0",
-            "--z", "0.0",
-            "--roll", "0.0",
-            "--pitch", "0.0",
-            "--yaw", "0.0",
-            "--frame-id", "map",
-            "--child-frame-id", "odom",
-        ],
-    )
-
     # 底盘发布以 odom 为父坐标系、base_link 为子坐标系的轮式里程计。
     # FAST-LIO2 使用其配置中的 camera_init/body 坐标系，两套里程计均保留。
     scout_base_launch = IncludeLaunchDescription(
@@ -392,6 +400,7 @@ def generate_launch_description():
     # 因而启动参数错误时不会留下已经启动的底盘或雷达进程。
     bringup_cmd_group = GroupAction(
         [
+            OpaqueFunction(function=_create_relocalizer),
             OpaqueFunction(function=_validate_and_prepare_map_path),
             OpaqueFunction(function=_prepare_fusion),
             OpaqueFunction(function=_create_lidar_odom_transformer),
@@ -399,7 +408,6 @@ def generate_launch_description():
             scout_base_launch,
             mid360_launch,
             lidar_static_tf,
-            map_odom_static_tf,
             fast_lio_node,
         ]
     )
@@ -411,6 +419,8 @@ def generate_launch_description():
             declare_base_tf,
             declare_start_lidar,
             declare_use_relocalization,
+            declare_prior_pcd_file,
+            declare_relocalization_config,
             declare_mapping_mode,
             declare_map_save_path,
             declare_fast_lio_config,
