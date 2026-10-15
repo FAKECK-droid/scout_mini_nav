@@ -46,6 +46,11 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/test/test_relocalization_launch.py)
   set_tests_properties(relocalization_launch_contract PROPERTIES TIMEOUT 20)
+  # 验证导航开关、安装路径、地图检查、时钟和速度路由；不执行硬件启动项。
+  add_test(NAME nav2_launch_contract
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/test_nav2_launch.py)
+  set_tests_properties(nav2_launch_contract PROPERTIES TIMEOUT 30)
 endif()
 
 ament_package()

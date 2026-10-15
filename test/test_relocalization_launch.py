@@ -8,7 +8,8 @@ from pathlib import Path
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchContext
-from launch.actions import DeclareLaunchArgument
+from launch.substitutions import TextSubstitution
+from launch_ros.actions import Node
 from launch_ros.utilities import evaluate_parameters
 
 project = Path(__file__).resolve().parents[1]
@@ -25,9 +26,14 @@ class RelocalizationLaunchTest(unittest.TestCase):
     def setUp(self):
         self.module = load(project / "launch/bringup_launch.py", "bringup_relocalization_test")
         self.context = LaunchContext()
-        for action in self.module.generate_launch_description().entities:
-            if isinstance(action, DeclareLaunchArgument):
-                action.execute(self.context)
+        self.description = self.module.generate_launch_description()
+        for action in self.description.entities[0].get_sub_entities():
+            action.execute(self.context)
+        self.map_odom_static_tf = next(
+            action for action in self.description.entities[1].get_sub_entities()
+            if isinstance(action, Node) and any(
+                isinstance(substitution, TextSubstitution) and substitution.text == "odom"
+                for argument in action.cmd for substitution in argument))
         self.directory = Path(tempfile.mkdtemp(prefix="launch-contract-", dir=Path.cwd()))
         self.map = self.directory / "fixture.pcd"
         self.map.write_text("launch validation fixture\n")
@@ -41,6 +47,7 @@ class RelocalizationLaunchTest(unittest.TestCase):
 
     def test_disabled_needs_no_map(self):
         self.assertEqual(self.module._create_relocalizer(self.context), [])
+        self.assertTrue(self.map_odom_static_tf.condition.evaluate(self.context))
 
     def test_enabled_missing_map_is_rejected(self):
         self.context.launch_configurations["use_relocalization"] = "true"
@@ -65,7 +72,7 @@ class RelocalizationLaunchTest(unittest.TestCase):
         self.context.launch_configurations["relocalization_config"] = str(
             share / "config/relocalization.yaml")
         self.assertEqual(actual, self.node_parameters(standalone._create(self.context)[0]))
-        self.assertNotIn("map_odom_static_tf", (project / "launch/bringup_launch.py").read_text())
+        self.assertFalse(self.map_odom_static_tf.condition.evaluate(self.context))
 
     def test_invalid_rotation_is_rejected(self):
         config = self.directory / "invalid.yaml"

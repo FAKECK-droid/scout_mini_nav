@@ -6,6 +6,7 @@
 两路里程计由 robot_localization 融合，无论建图模式是否开启都持续运行。
 建图模式控制 FAST-LIO2 的全局地图发布与 PCD 累积保存，不会停止激光惯性
 里程计。关闭建图模式时，FAST-LIO2 仍维护算法所需的内部局部地图。
+可选启动 Nav2 导航栈与二维地图服务器；地图定位沿用已有 map → odom。
 """
 
 import importlib.util
@@ -25,7 +26,7 @@ from launch.actions import (
     SetLaunchConfiguration,
     OpaqueFunction,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -212,95 +213,112 @@ def _validate_and_prepare_map_path(context):
     return [SetLaunchConfiguration("resolved_map_save_path", map_save_path)]
 
 
-def generate_launch_description():
-    """声明统一启动参数，并在 bringup_cmd_group 内启动所有设备节点。"""
-    scout_base_share = get_package_share_directory("scout_base")
-    fast_lio_share = get_package_share_directory("fast_lio")
-    nav_share = get_package_share_directory("scout_mini_nav")
+def _create_declare_group(fast_lio_share, nav_share):
+    """统一声明启动参数，供后续启动组使用。"""
+    # 默认 PCD 文件名按本次启动时间生成。
+    map_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".pcd"
+    return GroupAction(
+        scoped=False,
+        actions=[
+            DeclareLaunchArgument(
+                "use_sim_time",
+                default_value="false",
+                choices=["true", "false"],
+                description="是否使用 ROS 仿真时钟；实机运行保持 false",
+            ),
+            DeclareLaunchArgument(
+                "use_nav2",
+                default_value="true",
+                choices=["true", "false"],
+                description="是否启动 Nav2 导航栈及二维地图服务器",
+            ),
+            DeclareLaunchArgument(
+                "map_load_path",
+                default_value="/home/yan/ros2_ws/src/scout_mini_nav/maps/S402-S413.yaml",
+                description="导航地图 YAML 完整路径；其中 image 字段指向 PGM 图像",
+            ),
+            DeclareLaunchArgument(
+                "nav2_params_file",
+                default_value=os.path.join(nav_share, "params", "nav2_params.yaml"),
+                description="Nav2 参数 YAML；默认使用安装后的 scout_mini_nav/share 配置",
+            ),
+            DeclareLaunchArgument(
+                "start_base",
+                default_value="true",
+                choices=["true", "false"],
+                description="是否启动 Scout Mini 底盘节点；启动后底盘会进入受控模式",
+            ),
+            DeclareLaunchArgument(
+                "publish_base_tf",
+                default_value="false",
+                choices=["true", "false"],
+                description="底盘自身的轮式 TF 开关；EKF 发布融合 TF 时必须保持 false，/odom 仍发布",
+            ),
+            DeclareLaunchArgument(
+                "start_lidar",
+                default_value="true",
+                choices=["true", "false"],
+                description="是否启动 MID360 雷达驱动及 base_link 到 lidar 的静态 TF",
+            ),
+            DeclareLaunchArgument(
+                "use_relocalization",
+                default_value="false",
+                choices=["true", "false"],
+                description="true 启动 small_gicp 重定位，RViz 给初值后维护 map → odom；false 不启动重定位并发布重合的静态 TF",
+            ),
+            DeclareLaunchArgument(
+                "prior_pcd_file", default_value="",
+                description="启用重定位时必填：先验 PCD 地图绝对路径，不自动选择地图",
+            ),
+            DeclareLaunchArgument(
+                "mapping_mode",
+                default_value="false",
+                choices=["true", "false"],
+                description="true 开启全局地图发布和 PCD 累积；false 只运行激光雷达惯性里程计",
+            ),
+            DeclareLaunchArgument(
+                "map_save_path",
+                default_value=os.path.join(
+                    "/home/yan/ros2_ws/src/scout_mini_nav/maps", map_filename
+                ),
+                description="PCD 绝对路径；默认按启动时间命名，指定同名文件时会覆盖",
+            ),
+            DeclareLaunchArgument(
+                "fast_lio_config",
+                default_value=os.path.join(
+                    fast_lio_share, "config", "mid360_jetson.yaml"
+                ),
+                description="FAST-LIO2 使用的 ROS 参数 YAML 完整路径",
+            ),
+            DeclareLaunchArgument(
+                "lio_transform_config",
+                default_value=os.path.join(
+                    nav_share,
+                    "params", "lidar_odom_transformer.yaml"),
+                description="FAST-LIO IMU 位姿到车体位姿的转换配置",
+            ),
+            DeclareLaunchArgument(
+                "ekf_config", default_value=os.path.join(nav_share, "params", "ekf.yaml"),
+                description="轮速和 LIO 融合配置，含底盘速度测量方差",
+            ),
+            DeclareLaunchArgument(
+                "relocalization_config", default_value="",
+                description="重定位参数 YAML；空值使用 scout_mini_relocalization 的默认配置",
+            ),
+            DeclareLaunchArgument(
+                "port_name",
+                default_value="can0",
+                description="Scout Mini 使用的 SocketCAN 接口名称",
+            ),
+        ],
+    )
 
-    # 所有启动项共用一个时钟设置，便于仿真与实机切换。
+
+def _create_bringup_group(scout_base_share, fast_lio_share, nav_share):
+    """集中执行准备函数及节点启动。"""
     use_sim_time = LaunchConfiguration("use_sim_time")
     mapping_mode = LaunchConfiguration("mapping_mode")
-    map_save_path = LaunchConfiguration("map_save_path")
     fast_lio_config = LaunchConfiguration("fast_lio_config")
-
-    declare_use_sim_time = DeclareLaunchArgument(
-        "use_sim_time",
-        default_value="false",
-        choices=["true", "false"],
-        description="是否使用 ROS 仿真时钟；实机运行保持 false",
-    )
-    declare_start_base = DeclareLaunchArgument(
-        "start_base",
-        default_value="true",
-        choices=["true", "false"],
-        description="是否启动 Scout Mini 底盘节点；启动后底盘会进入受控模式",
-    )
-    declare_base_tf = DeclareLaunchArgument(
-        "publish_base_tf",
-        default_value="false",
-        choices=["true", "false"],
-        description="底盘自身的轮式 TF 开关；EKF 发布融合 TF 时必须保持 false，/odom 仍发布",
-    )
-    declare_start_lidar = DeclareLaunchArgument(
-        "start_lidar",
-        default_value="true",
-        choices=["true", "false"],
-        description="是否启动 MID360 雷达驱动及 base_link 到 lidar 的静态 TF",
-    )
-    declare_use_relocalization = DeclareLaunchArgument(
-        "use_relocalization",
-        default_value="false",
-        choices=["true", "false"],
-        description="true 启动 small_gicp 重定位，RViz 给初值后维护 map → odom；false 不发布该 TF",
-    )
-    declare_prior_pcd_file = DeclareLaunchArgument(
-        "prior_pcd_file", default_value="",
-        description="启用重定位时必填：先验 PCD 地图绝对路径，不自动选择地图",
-    )
-    declare_relocalization_config = DeclareLaunchArgument(
-        "relocalization_config", default_value="",
-        description="重定位参数 YAML；空值使用 scout_mini_relocalization 的默认配置",
-    )
-    declare_mapping_mode = DeclareLaunchArgument(
-        "mapping_mode",
-        default_value="false",
-        choices=["true", "false"],
-        description="true 开启全局地图发布和 PCD 累积；false 只运行激光雷达惯性里程计",
-    )
-    # 每次启动时使用 Jetson 系统本地时间生成文件名；这不是退出时的时间。
-    # 显式传入 map_save_path:=... 时，用户指定的路径仍会覆盖这个默认值。
-    map_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".pcd"
-    declare_map_save_path = DeclareLaunchArgument(
-        "map_save_path",
-        default_value=os.path.join(
-            "/home/yan/ros2_ws/src/scout_mini_nav/maps", map_filename
-        ),
-        description="PCD 绝对路径；默认按启动时间命名，指定同名文件时会覆盖",
-    )
-    declare_fast_lio_config = DeclareLaunchArgument(
-        "fast_lio_config",
-        default_value=os.path.join(
-            fast_lio_share, "config", "mid360_jetson.yaml"
-        ),
-        description="FAST-LIO2 使用的 ROS 参数 YAML 完整路径",
-    )
-    declare_lio_transform_config = DeclareLaunchArgument(
-        "lio_transform_config",
-        default_value=os.path.join(
-            get_package_share_directory("scout_mini_nav"),
-            "params", "lidar_odom_transformer.yaml"),
-        description="FAST-LIO IMU 位姿到车体位姿的转换配置",
-    )
-    declare_ekf_config = DeclareLaunchArgument(
-        "ekf_config", default_value=os.path.join(nav_share, "params", "ekf.yaml"),
-        description="轮速和 LIO 融合配置，含底盘速度测量方差",
-    )
-    declare_port_name = DeclareLaunchArgument(
-        "port_name",
-        default_value="can0",
-        description="Scout Mini 使用的 SocketCAN 接口名称",
-    )
 
     # 由 FAST-LIO2 软件包提供的 MID360 专用驱动启动文件使用 Livox
     # CustomMsg 消息；安装 TF 在本启动文件中统一发布，关闭驱动内的重复发布器。
@@ -330,6 +348,26 @@ def generate_launch_description():
             "--yaw", str(LIDAR_MOUNT["rpy"][2]),
             "--frame-id", "base_link",
             "--child-frame-id", "lidar",
+        ],
+    )
+
+    # 未采用重定位时，map 与 odom 重合；启用重定位后由定位节点维护该 TF。
+    map_odom_static_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="map_odom_static_tf",
+        output="screen",
+        condition=UnlessCondition(LaunchConfiguration("use_relocalization")),
+        parameters=[{"use_sim_time": use_sim_time}],
+        arguments=[
+            "--x", "0.0",
+            "--y", "0.0",
+            "--z", "0.0",
+            "--roll", "0.0",
+            "--pitch", "0.0",
+            "--yaw", "0.0",
+            "--frame-id", "map",
+            "--child-frame-id", "odom",
         ],
     )
 
@@ -396,37 +434,44 @@ def generate_launch_description():
         ],
     )
 
+    # Nav2 的全部节点、地图检查与生命周期管理由独立导航入口负责。
+    navigation_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(nav_share, "launch", "navigation_launch.py")
+        ),
+        condition=IfCondition(LaunchConfiguration("use_nav2")),
+        launch_arguments={
+            "map": LaunchConfiguration("map_load_path"),
+            "params_file": LaunchConfiguration("nav2_params_file"),
+            "use_sim_time": use_sim_time,
+        }.items(),
+    )
+
     # 启动前先检查建图输出路径。所有实际设备和算法节点都集中在本组中，
     # 因而启动参数错误时不会留下已经启动的底盘或雷达进程。
-    bringup_cmd_group = GroupAction(
+    return GroupAction(
         [
             OpaqueFunction(function=_create_relocalizer),
             OpaqueFunction(function=_validate_and_prepare_map_path),
             OpaqueFunction(function=_prepare_fusion),
             OpaqueFunction(function=_create_lidar_odom_transformer),
+            navigation_launch,
             ekf_node,
             scout_base_launch,
             mid360_launch,
             lidar_static_tf,
+            map_odom_static_tf,
             fast_lio_node,
         ]
     )
 
-    return LaunchDescription(
-        [
-            declare_use_sim_time,
-            declare_start_base,
-            declare_base_tf,
-            declare_start_lidar,
-            declare_use_relocalization,
-            declare_prior_pcd_file,
-            declare_relocalization_config,
-            declare_mapping_mode,
-            declare_map_save_path,
-            declare_fast_lio_config,
-            declare_lio_transform_config,
-            declare_ekf_config,
-            declare_port_name,
-            bringup_cmd_group,
-        ]
-    )
+
+def generate_launch_description():
+    """先声明参数，再执行启动组。"""
+    scout_base_share = get_package_share_directory("scout_base")
+    fast_lio_share = get_package_share_directory("fast_lio")
+    nav_share = get_package_share_directory("scout_mini_nav")
+
+    declare_group = _create_declare_group(fast_lio_share, nav_share)
+    bringup_cmd_group = _create_bringup_group(scout_base_share, fast_lio_share, nav_share)
+    return LaunchDescription([declare_group, bringup_cmd_group])

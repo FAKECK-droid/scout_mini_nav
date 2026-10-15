@@ -14,10 +14,15 @@
 
 import os
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
+from launch.actions import (
+    DeclareLaunchArgument, GroupAction, OpaqueFunction,
+    SetEnvironmentVariable, SetLaunchConfiguration,
+)
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LoadComposableNodes
@@ -26,11 +31,52 @@ from launch_ros.descriptions import ComposableNode, ParameterFile
 from nav2_common.launch import RewrittenYaml
 
 
+def _validate_navigation_inputs(context):
+    """检查参数 YAML 和地图图像，导航入口可独立运行，不依赖硬件 bringup。"""
+    paths = {}
+    documents = {}
+    for name, label in (("params_file", "nav2_params_file"), ("map", "map_load_path")):
+        path = os.path.abspath(os.path.expanduser(LaunchConfiguration(name).perform(context)))
+        if not os.path.isfile(path):
+            raise RuntimeError(f"{label} 文件不存在：{path}")
+        try:
+            with open(path, "r", encoding="utf-8") as stream:
+                document = yaml.safe_load(stream)
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            raise RuntimeError(f"{label} 不是有效的 YAML：{path}") from exc
+        if not isinstance(document, dict):
+            raise RuntimeError(f"{label} 必须是 YAML 映射，不能直接传入 PGM：{path}")
+        paths[name] = path
+        documents[name] = document
+
+    if not any(isinstance(block, dict) and (
+            "ros__parameters" in block
+            or any(isinstance(child, dict) and "ros__parameters" in child
+                   for child in block.values()))
+            for block in documents["params_file"].values()):
+        raise RuntimeError("nav2_params_file 缺少 ROS ros__parameters 配置")
+    for name in ("local_costmap", "global_costmap"):
+        parameters = documents["params_file"].get(name, {}).get(
+            name, {}).get("ros__parameters", {})
+        if "footprint" in parameters and not isinstance(parameters["footprint"], str):
+            raise RuntimeError(f"{name}.footprint 必须是带引号的字符串，ROS 2 不支持嵌套数组")
+
+    image = documents["map"].get("image")
+    if not isinstance(image, str) or not image.strip():
+        raise RuntimeError("map_load_path 的地图 YAML 缺少有效的 image 字段")
+    image_path = os.path.abspath(os.path.join(
+        os.path.dirname(paths["map"]), os.path.expanduser(image)))
+    if not os.path.isfile(image_path):
+        raise RuntimeError(f"地图 image 文件不存在：{image_path}")
+    return [SetLaunchConfiguration(name, path) for name, path in paths.items()]
+
+
 def generate_launch_description():
     # Get the launch directory
-    bringup_dir = get_package_share_directory('nav2_bringup')
+    bringup_dir = get_package_share_directory('scout_mini_nav')
 
     namespace = LaunchConfiguration('namespace')
+    map_yaml_file = LaunchConfiguration('map')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
@@ -40,7 +86,8 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
 
-    lifecycle_nodes = ['controller_server',
+    lifecycle_nodes = ['map_server',
+                       'controller_server',
                        'smoother_server',
                        'planner_server',
                        'behavior_server',
@@ -60,7 +107,8 @@ def generate_launch_description():
     # Create our own temporary YAML files that include substitutions
     param_substitutions = {
         'use_sim_time': use_sim_time,
-        'autostart': autostart}
+        'autostart': autostart,
+        'yaml_filename': map_yaml_file}
 
     configured_params = ParameterFile(
         RewrittenYaml(
@@ -77,6 +125,11 @@ def generate_launch_description():
         'namespace',
         default_value='',
         description='Top-level namespace')
+
+    declare_map_yaml_cmd = DeclareLaunchArgument(
+        'map',
+        default_value='/home/yan/ros2_ws/src/scout_mini_nav/maps/S402.yaml',
+        description='Full path to the navigation map YAML file')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time',
@@ -111,6 +164,16 @@ def generate_launch_description():
     load_nodes = GroupAction(
         condition=IfCondition(PythonExpression(['not ', use_composition])),
         actions=[
+            Node(
+                package='nav2_map_server',
+                executable='map_server',
+                name='map_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings),
             Node(
                 package='nav2_controller',
                 executable='controller_server',
@@ -149,7 +212,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[configured_params],
                 arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings),
+                remappings=remappings + [('cmd_vel', 'cmd_vel_nav')]),
             Node(
                 package='nav2_bt_navigator',
                 executable='bt_navigator',
@@ -198,6 +261,12 @@ def generate_launch_description():
         target_container=container_name_full,
         composable_node_descriptions=[
             ComposableNode(
+                package='nav2_map_server',
+                plugin='nav2_map_server::MapServer',
+                name='map_server',
+                parameters=[configured_params],
+                remappings=remappings),
+            ComposableNode(
                 package='nav2_controller',
                 plugin='nav2_controller::ControllerServer',
                 name='controller_server',
@@ -220,7 +289,7 @@ def generate_launch_description():
                 plugin='behavior_server::BehaviorServer',
                 name='behavior_server',
                 parameters=[configured_params],
-                remappings=remappings),
+                remappings=remappings + [('cmd_vel', 'cmd_vel_nav')]),
             ComposableNode(
                 package='nav2_bt_navigator',
                 plugin='nav2_bt_navigator::BtNavigator',
@@ -258,6 +327,7 @@ def generate_launch_description():
 
     # Declare the launch options
     ld.add_action(declare_namespace_cmd)
+    ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)
@@ -265,6 +335,8 @@ def generate_launch_description():
     ld.add_action(declare_container_name_cmd)
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
+    # 所有 Nav2 输入检查、节点和生命周期统一保留在此导航入口。
+    ld.add_action(OpaqueFunction(function=_validate_navigation_inputs))
     # Add the actions to launch all of the navigation nodes
     ld.add_action(load_nodes)
     ld.add_action(load_composable_nodes)
