@@ -91,7 +91,7 @@ class Nav2LaunchTest(unittest.TestCase):
         values = self.context.launch_configurations
         self.assertEqual(values["use_nav2"], "true")
         self.assertEqual(values["map_load_path"],
-                         "/home/yan/ros2_ws/src/scout_mini_nav/maps/S402.yaml")
+                         "/home/yan/ros2_ws/src/scout_mini_nav/maps/S402-S413.yaml")
         self.assertEqual(values["nav2_params_file"],
                          str(Path(self.share) / "params/nav2_params.yaml"))
 

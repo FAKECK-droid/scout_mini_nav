@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scout Mini、Livox MID360 与 FAST-LIO2 的统一启动入口。
+"""Scout Mini、Livox MID360、FAST-LIO2 与 Femto Bolt 的统一启动入口。
 
 启动数据链路为：MID360 驱动发布雷达和 IMU 数据，FAST-LIO2 消费这两路
 数据并持续发布里程计与点云；可选启动 Scout Mini 底盘节点，发布底盘里程计。
@@ -7,6 +7,9 @@
 建图模式控制 FAST-LIO2 的全局地图发布与 PCD 累积保存，不会停止激光惯性
 里程计。关闭建图模式时，FAST-LIO2 仍维护算法所需的内部局部地图。
 可选启动 Nav2 导航栈与二维地图服务器；地图定位沿用已有 map → odom。
+Femto Bolt 读取 camera_calibration_file 指定的外参结果，发布 base_link → camera_link
+安装 TF；camera_link 到各图像/光学坐标系的工厂外参由官方相机驱动发布。
+默认由驱动将深度对齐到彩色图像；IR 图像流默认关闭，完整配置见 params/femto_bolt.yaml。
 """
 
 import importlib.util
@@ -39,6 +42,23 @@ LIDAR_MOUNT = {
     "translation": [0.0, 0.0, 0.145],
     "rpy": [0.0, 0.0, -math.pi / 2],
 }
+
+
+def _load_camera_support(nav_share):
+    """从同一包的安装目录加载相机启动辅助代码。"""
+    spec = importlib.util.spec_from_file_location(
+        "scout_femto_bolt_support", os.path.join(nav_share, "launch", "femto_bolt_support.py"))
+    support = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(support)
+    return support
+
+
+def _prepare_camera(context, nav_share):
+    return _load_camera_support(nav_share).prepare_camera(context, LIDAR_MOUNT)
+
+
+def _create_camera(context, nav_share):
+    return _load_camera_support(nav_share).create_camera(context)
 
 
 def _create_lidar_odom_transformer(context):
@@ -220,6 +240,7 @@ def _create_declare_group(fast_lio_share, nav_share):
     return GroupAction(
         scoped=False,
         actions=[
+            *_load_camera_support(nav_share).declare_arguments(),
             DeclareLaunchArgument(
                 "use_sim_time",
                 default_value="false",
@@ -451,6 +472,8 @@ def _create_bringup_group(scout_base_share, fast_lio_share, nav_share):
     # 因而启动参数错误时不会留下已经启动的底盘或雷达进程。
     return GroupAction(
         [
+            # 标定文件错误时先终止，避免相机/底盘/雷达已启动。
+            OpaqueFunction(function=_prepare_camera, kwargs={"nav_share": nav_share}),
             OpaqueFunction(function=_create_relocalizer),
             OpaqueFunction(function=_validate_and_prepare_map_path),
             OpaqueFunction(function=_prepare_fusion),
@@ -460,6 +483,7 @@ def _create_bringup_group(scout_base_share, fast_lio_share, nav_share):
             scout_base_launch,
             mid360_launch,
             lidar_static_tf,
+            OpaqueFunction(function=_create_camera, kwargs={"nav_share": nav_share}),
             map_odom_static_tf,
             fast_lio_node,
         ]

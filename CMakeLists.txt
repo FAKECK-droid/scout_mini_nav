@@ -51,6 +51,13 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/test/test_nav2_launch.py)
   set_tests_properties(nav2_launch_contract PROPERTIES TIMEOUT 30)
+  # 只求值相机启动项，检查标定矩阵、静态安装 TF 与驱动参数，不启动设备。
+  add_test(NAME femto_bolt_launch_contract
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/test_femto_bolt_launch.py)
+  set_tests_properties(femto_bolt_launch_contract PROPERTIES TIMEOUT 20)
 endif()
+
+install(FILES CAMERA_BRINGUP.md DESTINATION share/${PROJECT_NAME})
 
 ament_package()
