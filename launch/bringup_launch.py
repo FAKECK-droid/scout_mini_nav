@@ -328,7 +328,7 @@ def _create_declare_group(fast_lio_share, nav_share):
             ),
             DeclareLaunchArgument(
                 "port_name",
-                default_value="can0",
+                default_value="can_usb0",
                 description="Scout Mini 使用的 SocketCAN 接口名称",
             ),
         ],
