@@ -70,7 +70,7 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 
 controller_server:
   ros__parameters:
-    controller_frequency: 10.0
+    controller_frequency: 20.0
     odom_topic: odom
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
@@ -99,17 +99,18 @@ controller_server:
       min_obstacle_height: 0.05
       max_obstacle_height: 1.5
       min_obstacle_range: 0.0
-      max_obstacle_range: 10.0
-      # Omit dune_checkpoint to use the installed diff_default.bin.
-      # Set an absolute path to the NPTF .bin trained for your own footprint.
+      # Keep current points plus the 1 s horizon inside the model training range +/-5 m.
+      max_obstacle_range: 3.5
+      # Relative to this package's installed share directory on both WSL and Jetson.
       dune_checkpoint: /home/yan/ros2_ws/src/neupan_cpp/neupan_controller/models/scout_mini_waffle/scout_mini.bin
       receding: 10
-      step_time: 0.05
+      # A 1 s horizon at the same QP size; control still updates at 20 Hz.
+      step_time: 0.1
       ref_speed: 0.5
       max_speed: [0.8, 1.0]   # [m/s, rad/s]
       max_acce: [1.0, 2.0]    # [m/s^2, rad/s^2]
-      collision_threshold: 0.001
-      rotate_to_goal_gain: 1.5
+      collision_threshold: 0.1
+      rotate_to_goal_gain: 2.0
       ipath:
         interval: 0.05
         close_threshold: 0.1
@@ -121,13 +122,15 @@ controller_server:
         iter_threshold: 0.1
       adjust:
         q_s: [1.0, 1.0, 1.0]
-        p_u: 1.0
-        eta: 10.0
-        d_max: 1.0
+        # Favor forward progress over pursuing an unnecessarily large clearance.
+        p_u: 2.0
+        eta: 1.0
+        d_max: 0.3
         d_min: 0.1
         ro_obs: 400.0
         bk: 0.1
 
+# Humble controller_server creates this node even for a map-free controller.
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -135,15 +138,14 @@ local_costmap:
       robot_base_frame: base_link
       transform_tolerance: 0.2
       rolling_window: true
-      width: 5
-      height: 5
+      width: 3
+      height: 3
       resolution: 0.5
-      update_frequency: 10.0
+      update_frequency: 1.0
       publish_frequency: 1.0
       # The thin server entry point sets plugins/filters to typed empty arrays.
       # Do not put [] here: Humble may reject untyped empty YAML arrays.
-      # EXACT training vertices/order for the bundled diff_default.bin:
-      # length 1.6 m, width 2.0 m; this is a model example, not Scout Mini geometry.
+      # EXACT training vertices/order for the bundled Scout model (0.627 x 0.549 m).
       footprint: "[[0.3135, 0.2745], [-0.3135, 0.2745], [-0.3135, -0.2745], [0.3135, -0.2745]]"
       footprint_padding: 0.0
       plugins: ["obstacle_layer", "inflation_layer"]
