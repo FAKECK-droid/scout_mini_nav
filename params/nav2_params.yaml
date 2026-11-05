@@ -101,13 +101,14 @@ controller_server:
       min_obstacle_range: 0.0
       # Keep current points plus the 1 s horizon inside the model training range +/-5 m.
       max_obstacle_range: 3.5
-      # Relative to this package's installed share directory on both WSL and Jetson.
+      # Explicit model path on this Jetson; package-relative paths are also supported.
       dune_checkpoint: /home/yan/ros2_ws/src/neupan_cpp/neupan_controller/models/scout_mini_waffle/scout_mini.bin
       receding: 10
       # A 1 s horizon at the same QP size; control still updates at 20 Hz.
       step_time: 0.1
-      ref_speed: 0.5
-      max_speed: [0.8, 1.0]   # [m/s, rad/s]
+      # Match velocity_smoother: do not clip v independently after optimization.
+      ref_speed: 0.3
+      max_speed: [0.3, 1.0]   # [m/s, rad/s]
       max_acce: [1.0, 2.0]    # [m/s^2, rad/s^2]
       collision_threshold: 0.1
       rotate_to_goal_gain: 2.0
