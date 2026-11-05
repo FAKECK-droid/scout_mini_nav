@@ -109,11 +109,11 @@ controller_server:
       # A 1 s horizon at the same QP size; control still updates at 20 Hz.
       step_time: 0.1
       # Match velocity_smoother: do not clip v independently after optimization.
-      ref_speed: 0.3
+      ref_speed: 0.5
       max_speed: [0.3, 0.6]  # 原来 [0.3, 1.0]
-      max_acce: [1.0, 0.5]   # 原来 [1.0, 2.0]
+      max_acce: [1.0, 1.0]   # 原来 [1.0, 2.0]
       collision_threshold: 0.02
-      rotate_to_goal_gain: 1.2
+      rotate_to_goal_gain: 1.5
       ipath:
         interval: 0.05
         close_threshold: 0.1
