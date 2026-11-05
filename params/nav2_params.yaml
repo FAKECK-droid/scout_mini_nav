@@ -70,7 +70,7 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 
 controller_server:
   ros__parameters:
-    controller_frequency: 20.0
+    controller_frequency: 10.0
     odom_topic: odom
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
@@ -85,8 +85,8 @@ controller_server:
       movement_time_allowance: 10.0
     goal_checker:
       plugin: nav2_controller::SimpleGoalChecker
-      xy_goal_tolerance: 0.1
-      yaw_goal_tolerance: 0.1
+      xy_goal_tolerance: 0.3
+      yaw_goal_tolerance: 0.42
       stateful: true
     FollowPath:
       plugin: neupan_controller::NeupanController
@@ -97,21 +97,21 @@ controller_server:
       pointcloud_timeout: 2.0
       # Height and XY range in robot_base_frame at the cloud's timestamp.
       min_obstacle_height: 0.05
-      max_obstacle_height: 1.5
+      max_obstacle_height: 0.8
       min_obstacle_range: 0.0
       # Keep current points plus the 1 s horizon inside the model training range +/-5 m.
       max_obstacle_range: 3.5
       # Explicit model path on this Jetson; package-relative paths are also supported.
       dune_checkpoint: /home/yan/ros2_ws/src/neupan_cpp/neupan_controller/models/scout_mini_waffle/scout_mini.bin
-      receding: 10
+      receding: 20
       # A 1 s horizon at the same QP size; control still updates at 20 Hz.
       step_time: 0.1
       # Match velocity_smoother: do not clip v independently after optimization.
       ref_speed: 0.3
-      max_speed: [0.3, 1.0]   # [m/s, rad/s]
-      max_acce: [1.0, 2.0]    # [m/s^2, rad/s^2]
-      collision_threshold: 0.1
-      rotate_to_goal_gain: 2.0
+      max_speed: [0.3, 0.6]  # 原来 [0.3, 1.0]
+      max_acce: [1.0, 0.5]   # 原来 [1.0, 2.0]
+      collision_threshold: 0.02
+      rotate_to_goal_gain: 1.2
       ipath:
         interval: 0.05
         close_threshold: 0.1
@@ -142,21 +142,17 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.5
-      update_frequency: 1.0
+      update_frequency: 10.0
       publish_frequency: 1.0
       # The thin server entry point sets plugins/filters to typed empty arrays.
       # Do not put [] here: Humble may reject untyped empty YAML arrays.
       # EXACT training vertices/order for the bundled Scout model (0.627 x 0.549 m).
       footprint: "[[0.3135, 0.2745], [-0.3135, 0.2745], [-0.3135, -0.2745], [0.3135, -0.2745]]"
       footprint_padding: 0.0
-      plugins: ["obstacle_layer", "inflation_layer"]
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+      plugins: ["obstacle_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: True
+        enabled: false
         # 与 global_costmap 一样使用二维射线清理，避免旧高度体素残留。
         footprint_clearing_enabled: true
         max_obstacle_height: 1.0

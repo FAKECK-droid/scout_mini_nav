@@ -260,7 +260,7 @@ def _create_declare_group(fast_lio_share, nav_share):
             ),
             DeclareLaunchArgument(
                 "nav2_params_file",
-                default_value=os.path.join(nav_share, "params", "nav2_params.yaml"),
+                default_value=os.path.join(nav_share, "params", "nav2_params_no_localmap.yaml"),
                 description="Nav2 参数 YAML；默认使用安装后的 scout_mini_nav/share 配置",
             ),
             DeclareLaunchArgument(
