@@ -140,18 +140,18 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.5
-      update_frequency: 10.0
+      resolution: 0.05
+      update_frequency: 5.0
       publish_frequency: 1.0
       # The thin server entry point sets plugins/filters to typed empty arrays.
       # Do not put [] here: Humble may reject untyped empty YAML arrays.
       # EXACT training vertices/order for the bundled Scout model (0.627 x 0.549 m).
       footprint: "[[0.3135, 0.2745], [-0.3135, 0.2745], [-0.3135, -0.2745], [0.3135, -0.2745]]"
       footprint_padding: 0.0
-      plugins: ["obstacle_layer"]
+      plugins: ["obstacle_layer","inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: false
+        enabled: true
         # 与 global_costmap 一样使用二维射线清理，避免旧高度体素残留。
         footprint_clearing_enabled: true
         max_obstacle_height: 1.0
@@ -167,6 +167,10 @@ local_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
       always_send_full_costmap: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
 
 global_costmap:
   global_costmap:

@@ -260,7 +260,7 @@ def _create_declare_group(fast_lio_share, nav_share):
             ),
             DeclareLaunchArgument(
                 "nav2_params_file",
-                default_value=os.path.join(nav_share, "params", "nav2_params_no_localmap.yaml"),
+                default_value=os.path.join(nav_share, "params", "nav2_params.yaml"),
                 description="Nav2 参数 YAML；默认使用安装后的 scout_mini_nav/share 配置",
             ),
             DeclareLaunchArgument(
@@ -468,6 +468,13 @@ def _create_bringup_group(scout_base_share, fast_lio_share, nav_share):
         }.items(),
     )
 
+    rgbd_queue_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(nav_share, "launch", "rgbd_queue_launch.py")
+        )
+    )
+
+
     # 启动前先检查建图输出路径。所有实际设备和算法节点都集中在本组中，
     # 因而启动参数错误时不会留下已经启动的底盘或雷达进程。
     return GroupAction(
@@ -486,6 +493,7 @@ def _create_bringup_group(scout_base_share, fast_lio_share, nav_share):
             OpaqueFunction(function=_create_camera, kwargs={"nav_share": nav_share}),
             map_odom_static_tf,
             fast_lio_node,
+            rgbd_queue_launch,
         ]
     )
 
