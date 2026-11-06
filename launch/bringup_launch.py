@@ -470,7 +470,7 @@ def _create_bringup_group(scout_base_share, fast_lio_share, nav_share):
 
     rgbd_queue_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(nav_share, "launch", "rgbd_queue_launch.py")
+            os.path.join(get_package_share_directory("rgbd_image_queue"), "launch", "image_queue.launch.py")
         )
     )
 
