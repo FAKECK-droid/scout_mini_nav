@@ -89,7 +89,7 @@ controller_server:
       plugin: nav2_controller::SimpleGoalChecker
       xy_goal_tolerance: 0.3
       yaw_goal_tolerance: 0.42
-      stateful: false  # MPC: require current XY and yaw to match together.
+      stateful: true  # Latch XY arrival while the PID aligns goal yaw.
     FollowPath:
       plugin: neupan_controller::NeupanController
       # Runtime tuning is supported; see README for the full list.
@@ -113,6 +113,10 @@ controller_server:
       max_speed: [0.3, 0.6]  # 原来 [0.3, 1.0]
       max_acce: [1.0, 1.0]   # 原来 [1.0, 2.0]
       collision_threshold: 0.02
+      goal_yaw_pid:
+        kp: 1.5
+        ki: 0.05
+        kd: 0.1
       ipath:
         interval: 0.05
         close_threshold: 0.1
