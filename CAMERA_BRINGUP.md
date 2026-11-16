@@ -123,7 +123,7 @@ driver_arguments:
   serial_number: ''
   usb_port: ''
   device_num: 1
-  uvc_backend: libuvc
+  uvc_backend: v4l2
   product_id: ''
   enable_point_cloud: false
   cloud_frame_id: ''
@@ -249,3 +249,61 @@ node_parameters:
 相机运行时也可以直接查看：
 
     ros2 param dump /camera/camera
+
+
+## V4L2 接口恢复与独立图像验证（2026-11-16）
+
+本机当前使用 V4L2。出现 `No v4l device found for port: 2-1.3-3.2` 时，
+USB 仍以 5000M 识别 Femto Bolt，但部分 UVC 控制接口未建立对应视频节点。
+内核记录 `No streaming interface found for terminal 7`。
+只重新绑定缺失的深度控制接口 `2-1.3:1.2` 后，四个视频节点恢复，
+V4L2 + MJPG 和 V4L2 + RGB 两种模式均通过相机独立实测。
+这说明本次问题可由恢复接口绑定解决；不代表所有同名错误的原因相同。
+
+先停止相机、SDK 和 Viewer，再从开发机通过 SSH 诊断：
+
+```powershell
+ssh jetson-orin 'python3 ~/ros2_ws/src/scout_mini_nav/tools/recover_femto_uvc.py'
+```
+
+仅当缺失接口时执行恢复；多台相机使用 --usb-port 明确选择，端口以诊断结果为准：
+
+```powershell
+ssh -t jetson-orin 'sudo python3 ~/ros2_ws/src/scout_mini_nav/tools/recover_femto_uvc.py --usb-port 2-1.3 --apply'
+```
+
+工具校验 VID/PID=2bc5:066b、视频控制接口类型和 USB 占用，只恢复缺失接口。
+已有完整视频节点时不执行绑定。不要在相机运行时使用恢复操作。
+若仍不能恢复，应保留内核日志继续排查，而不是将端口编号写入其他相机配置。
+
+手动硬件验证脚本只启动相机和现有 RGB-D 队列，使用独立 DDS domain 229、localhost；
+读取现有 YAML，在本次进程内覆盖后端、彩色格式和日志等级。
+
+```powershell
+ssh jetson-orin 'source ~/ros2_ws/install/setup.bash && python3 ~/ros2_ws/src/scout_mini_nav/test/verify_femto_camera.py --workspace ~/ros2_ws --backend v4l2 --color-format MJPG'
+ssh jetson-orin 'source ~/ros2_ws/install/setup.bash && python3 ~/ros2_ws/src/scout_mini_nav/test/verify_femto_camera.py --workspace ~/ros2_ws --backend v4l2 --color-format RGB'
+```
+
+两次验证均保持深度采集 640x576@15、彩色 1280x720@15、SW D2C。
+驱动日志分别确认彩色实际 profile 为 MJPG 和 RGB888；原生 UVC 格式列表只有
+YUYV/MJPG，因此不能仅凭原生列表判定 SDK 的 RGB 模式不可用。
+
+| 验证项 | V4L2 + MJPG | V4L2 + RGB |
+| --- | --- | --- |
+| 彩色/深度原始消息数 | 35 / 36 | 36 / 35 |
+| 彩色/深度压缩消息数 | 41 / 41 | 42 / 42 |
+| 队列服务累计配对数 | 35 | 34 |
+| 取图配对时间差 | 约 25.59 ms | 约 15.58 ms |
+| JPEG / compressedDepth PNG 解码 | 通过 | 通过 |
+| 对齐后尺寸 | 均为 1280x720 | 均为 1280x720 |
+
+脚本按 Agent 相同的 OpenCV 路径解码队列返回的 JPEG 和深度 PNG，验证压缩图接口兼容；
+没有调用 Agent 模型。所有测试进程正常退出，四个视频节点保留。
+该测试是短时功能验证，不作为 CPU 性能或长期稳定性基准。
+
+证据保留在工作空间 log/scout_mini_nav 下：
+
+- femto_v4l2_MJPG_20261116T125112Z/result.json、camera.log、queue.log；
+- femto_v4l2_RGB_20261116T125141Z/result.json、camera.log、queue.log。
+
+本次保留开发板原有 RGB 配置改动及导航参数改动，不将这些已有改动混入恢复工具提交。
