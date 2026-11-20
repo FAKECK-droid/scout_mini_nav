@@ -1,0 +1,39 @@
+--- a/src/laserMapping.cpp
++++ b/src/laserMapping.cpp
+@@ -288,10 +288,21 @@
+ {
+     while (lidar_buffer.size() >= static_cast<size_t>(max_buffered_scans))
+     {
+-        lidar_buffer.pop_front();
+-        time_buffer.pop_front();
+-        // sync_packages may already have selected the dropped front scan.
+-        lidar_pushed = false;
++        // While the IMU catches up, retain the scan selected by sync_packages.
++        // Bound its lifetime in sensor time so a long outage cannot replay old scans.
++        constexpr double max_pending_scan_age_s = 2.0;
++        if (lidar_pushed && stamp - time_buffer.front() <= max_pending_scan_age_s)
++        {
++            if (lidar_buffer.size() == 1) return;
++            lidar_buffer.erase(lidar_buffer.begin() + 1);
++            time_buffer.erase(time_buffer.begin() + 1);
++        }
++        else
++        {
++            lidar_buffer.pop_front();
++            time_buffer.pop_front();
++            lidar_pushed = false;
++        }
+     }
+     lidar_buffer.push_back(cloud);
+     time_buffer.push_back(stamp);
+@@ -953,7 +964,9 @@
+         {
+             sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, lidar_qos, standard_pcl_cbk);
+         }
+-        sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 10, imu_cbk);
++        // Consume fresh IMU samples even if a reliable DDS reader is replaying old data.
++        const auto imu_qos = rclcpp::SensorDataQoS().keep_last(64);
++        sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, imu_qos, imu_cbk);
+         pubLaserCloudFull_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 20);
+         pubLaserCloudFull_body_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", 20);
+         pubLaserCloudEffect_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", 20);
